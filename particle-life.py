@@ -8,7 +8,7 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 N_PARTICLES = 40000
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
-R_FACTOR = 0.005  # Interaction radius factor relative to box size
+R_FACTOR = (BOX_SIZE * BOX_SIZE / N_PARTICLES) ** 0.5 * 1.0  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5
 DT = 0.0002
