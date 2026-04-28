@@ -17,7 +17,7 @@ BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE * BOX_SIZE / N_PARTICLES) ** 0.5 * 1.0  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5
-DT = 0.0002
+DT = 0.002
 REPULSION_STRENGTH = 2
 SUBSTEPS_PER_FRAME = 20
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
@@ -47,7 +47,7 @@ INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
 GRID_N = MAX_GRID_N
 CELL_SIZE = BOX_SIZE / GRID_N
-MAX_PARTICLES_PER_CELL = 512  # 每个格子中的最大粒子数
+MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N) * 2)  # 每个格子中的最大粒子数
 # assert CELL_SIZE >= R2, "Grid cell size must be >= R2."
 
 def get_windows_work_area():  # 获取Windows工作区（任务栏以上的空间）尺寸
@@ -157,7 +157,7 @@ def clear_grid():
 
 
 @ti.kernel
-def build_grid():  # 将粒子分配到网格中
+def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
     for i in range(N_PARTICLES):
         gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
         gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
@@ -190,7 +190,7 @@ def middle_band_profile(r):
 
 
 @ti.kernel
-def compute_forces():  # 计算受力
+def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
     for i in range(N_PARTICLES):
         xi = pos[i]
         ti_i = ptype[i]
@@ -264,8 +264,16 @@ fps = None
 while window.running:
     for _ in range(SUBSTEPS_PER_FRAME):
         clear_grid()
-        build_grid()
-        compute_forces()
+        build_grid(cell_particles)
+        overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
+        while overflow > 0:  # 有的格子溢出了
+            MAX_PARTICLES_PER_CELL *= 2  # 加倍格子容量
+            cell_particles = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
+            print(f"[Warning] Grid overflow count = {overflow}.")
+            clear_grid()
+            build_grid(cell_particles)
+            overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
+        compute_forces(cell_particles)
         integrate_overdamped()
 
     # 可视化（粒子比较多时这里非常耗时）
@@ -279,10 +287,6 @@ while window.running:
         fps = fps * 0.9 + (1.0 / dt_frame) * 0.1 if fps is not None else 1.0 / dt_frame
 
     window.text(f"FPS: {fps:.1f}", pos=(0.01, 0.03), font_size=18, color=0xFFFFFF)  # 显示帧率
-
-    # overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
-    # if overflow > 0:
-    #     print(f"[Warning] Grid overflow count = {overflow}. Consider increasing MAX_PARTICLES_PER_CELL.")
 
     window.show()
     frame += 1
