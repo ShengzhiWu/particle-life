@@ -24,10 +24,21 @@ print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
 # interaction[a, b] means force coefficient on type-a particle from type-b particle
+a = 0.3
+b = 0.05
 INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
+    # [
+    #     [0.03, -1],
+    #     [0.01, -0.1],
+    # ],
+
+    # 彩虹虫子
     [
-        [0.03, -1],
-        [0.01, -0.1],
+        [a, 0, 0, 0, 0],
+        [b, a, 0, 0, 0],
+        [0, b, a, 0, 0],
+        [0, 0, b, a, 0],
+        [0, 0, 0, b, a],
     ],
     dtype=np.float32,
 )
