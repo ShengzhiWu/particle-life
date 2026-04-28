@@ -177,7 +177,11 @@ print(INTERACTION_INIT)
 
 window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=BACKGROUND_COLOR)
 
+import time
+
 frame = 0
+last_time = time.perf_counter()
+fps = 0.0
 while window.running:
     for _ in range(SUBSTEPS_PER_FRAME):
         clear_grid()
@@ -187,6 +191,14 @@ while window.running:
 
     positions_np = pos.to_numpy() / BOX_SIZE
     window.circles(positions_np, radius=PARTICLE_RADIUS, color=colors_np)
+
+    now = time.perf_counter()
+    dt_frame = now - last_time
+    last_time = now
+    if dt_frame > 0:
+        fps = fps * 0.9 + (1.0 / dt_frame) * 0.1
+
+    window.text(f"FPS: {fps:.1f}", pos=(0.01, 0.03), font_size=18, color=0xFFFFFF)  # 显示帧率
 
     overflow = overflow_counter[None]
     if overflow > 0 and frame % 120 == 0:
