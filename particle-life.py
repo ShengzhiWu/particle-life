@@ -12,14 +12,15 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-N_PARTICLES = 100000
+N_PARTICLES = 6000
+space_filling_factor = 10
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
-R_FACTOR = (BOX_SIZE * BOX_SIZE / N_PARTICLES) ** 0.5 * 1.0  # Interaction radius factor relative to box size
+R_FACTOR = (BOX_SIZE * BOX_SIZE / (N_PARTICLES / space_filling_factor)) ** 0.5  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
-R2 = R_FACTOR * 5
+R2 = R_FACTOR * 5  # 5
 DT = 0.002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 20
+SUBSTEPS_PER_FRAME = 5
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
@@ -234,7 +235,7 @@ def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignor
 @ti.kernel
 def integrate_overdamped():  # 更新位置
     for i in range(N_PARTICLES):
-        pos[i] += force[i] * DT
+        pos[i] += force[i] * (DT * R_FACTOR)
 
         # Periodic boundary condition on a square domain
         if pos[i][0] >= BOX_SIZE:
