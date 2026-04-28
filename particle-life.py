@@ -11,25 +11,22 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-N_PARTICLES = 50000
+N_PARTICLES = 100000
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE * BOX_SIZE / N_PARTICLES) ** 0.5 * 1.0  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5
-DT = 0.0001
+DT = 0.0002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 10
+SUBSTEPS_PER_FRAME = 20
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Grid requirement: cell_size >= R2
-REQUESTED_GRID_N = 100
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
-GRID_N = min(REQUESTED_GRID_N, MAX_GRID_N)
+GRID_N = MAX_GRID_N
 CELL_SIZE = BOX_SIZE / GRID_N
+MAX_PARTICLES_PER_CELL = 512  # 每个格子中的最大粒子数
 # assert CELL_SIZE >= R2, "Grid cell size must be >= R2."
-
-# Fixed-capacity particle list per cell for high performance
-MAX_PARTICLES_PER_CELL = 256
 
 def get_windows_work_area():  # 获取Windows工作区（任务栏以上的空间）尺寸
     if os.name != "nt":  # 非 Windows 系统不支持
@@ -105,12 +102,11 @@ print(f"GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
 
 # Non-symmetric interaction matrix in [-1, 1]
 # interaction[a, b] means force coefficient on type-a particle from type-b particle
-INTERACTION_INIT = np.array(  # 相互作用矩阵
-    # [
-    #     [0.03, -0.5],
-    #     [0.001, -0.1],
-    # ],
-    [[-0.2]],
+INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
+    [
+        [0.03, -1],
+        [0.01, -0.1],
+    ],
     dtype=np.float32,
 )
 
@@ -188,7 +184,7 @@ def compute_forces():  # 计算受力
         cx = ti.max(0, ti.min(cx, GRID_N - 1))
         cy = ti.max(0, ti.min(cy, GRID_N - 1))
 
-        for ox, oy in ti.ndrange((-1, 2), (-1, 2)):
+        for ox, oy in ti.ndrange((-1, 2), (-1, 2)):  # 遍历临近的格子
             nx = (cx + ox + GRID_N) % GRID_N
             ny = (cy + oy + GRID_N) % GRID_N
             count = ti.min(cell_count[nx, ny], MAX_PARTICLES_PER_CELL)
@@ -255,6 +251,7 @@ while window.running:
         compute_forces()
         integrate_overdamped()
 
+    # 可视化（粒子比较多时这里非常耗时）
     positions_np = pos.to_numpy() / BOX_SIZE
     window.circles(positions_np, radius=PARTICLE_RADIUS, color=colors_np)
 
@@ -266,9 +263,9 @@ while window.running:
 
     window.text(f"FPS: {fps:.1f}", pos=(0.01, 0.03), font_size=18, color=0xFFFFFF)  # 显示帧率
 
-    overflow = overflow_counter[None]
-    if overflow > 0 and frame % 10 == 0:
-        print(f"[Warning] Grid overflow count = {overflow}. Consider increasing MAX_PARTICLES_PER_CELL.")
+    # overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
+    # if overflow > 0:
+    #     print(f"[Warning] Grid overflow count = {overflow}. Consider increasing MAX_PARTICLES_PER_CELL.")
 
     window.show()
     frame += 1
