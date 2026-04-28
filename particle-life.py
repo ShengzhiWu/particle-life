@@ -4,6 +4,7 @@ import tkinter as tk
 import os
 import ctypes
 import time
+import colorsys
 from ctypes import wintypes
 
 ti.init(arch=ti.gpu)
@@ -21,7 +22,17 @@ REPULSION_STRENGTH = 2
 SUBSTEPS_PER_FRAME = 20
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
-# Grid requirement: cell_size >= R2
+# Non-symmetric interaction matrix in [-1, 1]
+# interaction[a, b] means force coefficient on type-a particle from type-b particle
+INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
+    [
+        [0.03, -1],
+        [0.01, -0.1],
+    ],
+    dtype=np.float32,
+)
+
+# Grid
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
 GRID_N = MAX_GRID_N
 CELL_SIZE = BOX_SIZE / GRID_N
@@ -94,28 +105,23 @@ try:
 except Exception:
     WINDOW_RES = 900
 PARTICLE_RADIUS = 1.5  # 粒子显示尺寸
-PARTICLE_COLORS = np.array([0x3EA6FF, 0xFF7043], dtype=np.uint32)  # 粒子颜色
+_n_types = len(INTERACTION_INIT)
+PARTICLE_COLORS = np.array(
+    [int('{:02x}{:02x}{:02x}'.format(*[int(c * 255) for c in colorsys.hsv_to_rgb(i / _n_types, 1.0, 1.0)]), 16)
+     for i in range(_n_types)],
+    dtype=np.uint32,
+)  # 粒子颜色，在色相环上等间距分布
 
 BACKGROUND_COLOR = 0x000000
 
 print(f"GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
-
-# Non-symmetric interaction matrix in [-1, 1]
-# interaction[a, b] means force coefficient on type-a particle from type-b particle
-INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
-    [
-        [0.03, -1],
-        [0.01, -0.1],
-    ],
-    dtype=np.float32,
-)
 
 if np.any(INTERACTION_INIT < -1.0) or np.any(INTERACTION_INIT > 1.0):
     raise ValueError("Interaction matrix values must be within [-1, 1].")
 
 pos = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
 force = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
-ptype = ti.field(dtype=ti.i32, shape=N_PARTICLES)
+ptype = ti.field(dtype=ti.i32, shape=N_PARTICLES)  # 粒子类型
 
 interaction = ti.field(dtype=ti.f32, shape=INTERACTION_INIT.shape)
 
