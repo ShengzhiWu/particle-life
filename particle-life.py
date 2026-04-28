@@ -11,17 +11,18 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-N_PARTICLES = 40000
+N_PARTICLES = 50000
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE * BOX_SIZE / N_PARTICLES) ** 0.5 * 1.0  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5
-DT = 0.0002
+DT = 0.0001
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 20
+SUBSTEPS_PER_FRAME = 10
+print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Grid requirement: cell_size >= R2
-REQUESTED_GRID_N = 24
+REQUESTED_GRID_N = 100
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
 GRID_N = min(REQUESTED_GRID_N, MAX_GRID_N)
 CELL_SIZE = BOX_SIZE / GRID_N
@@ -95,20 +96,21 @@ try:
         root.destroy()
 except Exception:
     WINDOW_RES = 900
-PARTICLE_RADIUS = 1.3  # 粒子显示尺寸
+PARTICLE_RADIUS = 1.5  # 粒子显示尺寸
 PARTICLE_COLORS = np.array([0x3EA6FF, 0xFF7043], dtype=np.uint32)  # 粒子颜色
 
 BACKGROUND_COLOR = 0x000000
 
-print(f"GRID_N={GRID_N}, CELL_SIZE={CELL_SIZE:.5f}, MAX_GRID_N={MAX_GRID_N}")
+print(f"GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
 
 # Non-symmetric interaction matrix in [-1, 1]
 # interaction[a, b] means force coefficient on type-a particle from type-b particle
 INTERACTION_INIT = np.array(  # 相互作用矩阵
-    [
-        [0.1, 0],
-        [0,   0],
-    ],
+    # [
+    #     [0.03, -0.5],
+    #     [0.001, -0.1],
+    # ],
+    [[-0.2]],
     dtype=np.float32,
 )
 
@@ -119,7 +121,7 @@ pos = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
 force = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
 ptype = ti.field(dtype=ti.i32, shape=N_PARTICLES)
 
-interaction = ti.field(dtype=ti.f32, shape=(2, 2))
+interaction = ti.field(dtype=ti.f32, shape=INTERACTION_INIT.shape)
 
 cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N))
 cell_particles = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
@@ -130,7 +132,7 @@ overflow_counter = ti.field(dtype=ti.i32, shape=())
 def init_particles_and_types():
     for i in range(N_PARTICLES):
         pos[i] = ti.Vector([ti.random(dtype=ti.f32) * BOX_SIZE, ti.random(dtype=ti.f32) * BOX_SIZE])
-        ptype[i] = ti.cast(ti.random(dtype=ti.f32) * 2.0, ti.i32)
+        ptype[i] = ti.cast(ti.random(dtype=ti.f32) * interaction.shape[0], ti.i32)
         force[i] = ti.Vector([0.0, 0.0])
 
 
@@ -142,7 +144,7 @@ def clear_grid():
 
 
 @ti.kernel
-def build_grid():
+def build_grid():  # 将粒子分配到网格中
     for i in range(N_PARTICLES):
         gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
         gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
@@ -240,15 +242,12 @@ interaction.from_numpy(INTERACTION_INIT)
 ptype_np = ptype.to_numpy()
 colors_np = PARTICLE_COLORS[ptype_np]
 
-print("Interaction matrix:")
-print(INTERACTION_INIT)
-
 window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=BACKGROUND_COLOR)  # 创建窗口
 center_window_on_screen_windows("Particle Life")  # 居中窗口
 
 frame = 0
 last_time = time.perf_counter()
-fps = 0.0
+fps = None
 while window.running:
     for _ in range(SUBSTEPS_PER_FRAME):
         clear_grid()
@@ -263,12 +262,12 @@ while window.running:
     dt_frame = now - last_time
     last_time = now
     if dt_frame > 0:
-        fps = fps * 0.9 + (1.0 / dt_frame) * 0.1
+        fps = fps * 0.9 + (1.0 / dt_frame) * 0.1 if fps is not None else 1.0 / dt_frame
 
     window.text(f"FPS: {fps:.1f}", pos=(0.01, 0.03), font_size=18, color=0xFFFFFF)  # 显示帧率
 
     overflow = overflow_counter[None]
-    if overflow > 0 and frame % 120 == 0:
+    if overflow > 0 and frame % 10 == 0:
         print(f"[Warning] Grid overflow count = {overflow}. Consider increasing MAX_PARTICLES_PER_CELL.")
 
     window.show()
