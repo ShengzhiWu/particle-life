@@ -218,16 +218,18 @@ def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignor
 
                     if r < R2:
                         unit = rij / r
-                        mag = 0.0
 
                         if r < R1:
                             mag = -REPULSION_STRENGTH * (1.0 - r / R1)
+                            fi += mag * unit
                         else:
                             tri = middle_band_profile(r)
                             ti_j = ptype[j]
                             mag = interaction[ti_i, ti_j] * tri
-
-                        fi += mag * unit
+                            # if ti_i == ti_j:
+                            fi += mag * unit  # 吸引 / 排斥力
+                            # else:
+                                # fi += mag * ti.Vector([-unit[1], unit[0]])  # 旋转力
 
         force[i] = fi
 
