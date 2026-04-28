@@ -1,5 +1,9 @@
 ﻿import numpy as np
 import taichi as ti
+import tkinter as tk
+import os
+import ctypes
+import time
 
 ti.init(arch=ti.gpu)
 
@@ -25,12 +29,41 @@ CELL_SIZE = BOX_SIZE / GRID_N
 # Fixed-capacity particle list per cell for high performance
 MAX_PARTICLES_PER_CELL = 256
 
-# Render settings
-WINDOW_RES = 900
-PARTICLE_RADIUS = 1.3
-PARTICLE_COLORS = np.array([0x3EA6FF, 0xFF7043], dtype=np.uint32)
+try:
+    root = tk.Tk()
+    root.withdraw()
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    WINDOW_RES = max(200, int(min(screen_w, screen_h) * 0.9))  # 根据屏幕尺寸自动设置窗口尺寸
+    root.destroy()
+except Exception:
+    WINDOW_RES = 900
+PARTICLE_RADIUS = 1.3  # 粒子显示尺寸
+PARTICLE_COLORS = np.array([0x3EA6FF, 0xFF7043], dtype=np.uint32)  # 粒子颜色
 
-BACKGROUND_COLOR = 0x101014
+BACKGROUND_COLOR = 0x000000
+
+def center_window_on_screen_windows(window_title, window_w, window_h, retries=50, delay_s=0.01):  # 让窗口居中
+    if os.name != "nt":
+        return False
+
+    user32 = ctypes.windll.user32
+    screen_w = user32.GetSystemMetrics(0)
+    screen_h = user32.GetSystemMetrics(1)
+    x = max(0, (screen_w - window_w) // 2)
+    y = max(0, (screen_h - window_h) // 2)
+
+    for _ in range(retries):
+        hwnd = user32.FindWindowW(None, window_title)
+        if hwnd:
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            user32.SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+            return True
+        time.sleep(delay_s)
+
+    return False
 
 print(f"GRID_N={GRID_N}, CELL_SIZE={CELL_SIZE:.5f}, MAX_GRID_N={MAX_GRID_N}")
 
@@ -175,9 +208,8 @@ colors_np = PARTICLE_COLORS[ptype_np]
 print("Interaction matrix:")
 print(INTERACTION_INIT)
 
-window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=BACKGROUND_COLOR)
-
-import time
+window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=BACKGROUND_COLOR)  # 创建窗口
+center_window_on_screen_windows("Particle Life", WINDOW_RES, WINDOW_RES)  # 居中窗口
 
 frame = 0
 last_time = time.perf_counter()
