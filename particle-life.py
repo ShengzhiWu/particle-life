@@ -12,15 +12,17 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
+DIMENSION = 2
+assert DIMENSION in (2, 3), "DIMENSION must be 2 or 3."
 N_PARTICLES = 6000
-space_filling_factor = 10
+space_filling_factor = 10  # 10 1
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
-R_FACTOR = (BOX_SIZE * BOX_SIZE / (N_PARTICLES / space_filling_factor)) ** 0.5  # Interaction radius factor relative to box size
+R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5  # 5
 DT = 0.002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 5
+SUBSTEPS_PER_FRAME = 100  # 5
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
@@ -48,8 +50,10 @@ INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
 GRID_N = MAX_GRID_N
 CELL_SIZE = BOX_SIZE / GRID_N
-MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N) * 2)  # 每个格子中的最大粒子数
-# assert CELL_SIZE >= R2, "Grid cell size must be >= R2."
+if DIMENSION == 2:
+    MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N) * 2)  # 每个格子中的最大粒子数
+else:
+    MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N * GRID_N) * 2)
 
 def get_windows_work_area():  # 获取Windows工作区（任务栏以上的空间）尺寸
     if os.name != "nt":  # 非 Windows 系统不支持
@@ -126,51 +130,40 @@ PARTICLE_COLORS = np.array(
 
 BACKGROUND_COLOR = 0x000000
 
-print(f"GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
+print(f"DIMENSION = {DIMENSION}, GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
 
 if np.any(INTERACTION_INIT < -1.0) or np.any(INTERACTION_INIT > 1.0):
     raise ValueError("Interaction matrix values must be within [-1, 1].")
 
-pos = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
-force = ti.Vector.field(2, dtype=ti.f32, shape=N_PARTICLES)
+pos = ti.Vector.field(DIMENSION, dtype=ti.f32, shape=N_PARTICLES)
+force = ti.Vector.field(DIMENSION, dtype=ti.f32, shape=N_PARTICLES)
 ptype = ti.field(dtype=ti.i32, shape=N_PARTICLES)  # 粒子类型
 
 interaction = ti.field(dtype=ti.f32, shape=INTERACTION_INIT.shape)
 
-cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N))
-cell_particles = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
+if DIMENSION == 2:
+    cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N))
+
+    def allocate_cell_particles():
+        return ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
+else:
+    cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, GRID_N))
+
+    def allocate_cell_particles():
+        return ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
+cell_particles = allocate_cell_particles()
 overflow_counter = ti.field(dtype=ti.i32, shape=())
 
 
 @ti.kernel
 def init_particles_and_types():
     for i in range(N_PARTICLES):
-        pos[i] = ti.Vector([ti.random(dtype=ti.f32) * BOX_SIZE, ti.random(dtype=ti.f32) * BOX_SIZE])
+        p = ti.Vector.zero(ti.f32, DIMENSION)
+        for d in ti.static(range(DIMENSION)):
+            p[d] = ti.random(dtype=ti.f32) * BOX_SIZE
+        pos[i] = p
         ptype[i] = ti.cast(ti.random(dtype=ti.f32) * interaction.shape[0], ti.i32)
-        force[i] = ti.Vector([0.0, 0.0])
-
-
-@ti.kernel
-def clear_grid():
-    overflow_counter[None] = 0
-    for i, j in ti.ndrange(GRID_N, GRID_N):
-        cell_count[i, j] = 0
-
-
-@ti.kernel
-def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
-    for i in range(N_PARTICLES):
-        gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
-        gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
-
-        gx = ti.max(0, ti.min(gx, GRID_N - 1))
-        gy = ti.max(0, ti.min(gy, GRID_N - 1))
-
-        slot = ti.atomic_add(cell_count[gx, gy], 1)
-        if slot < MAX_PARTICLES_PER_CELL:
-            cell_particles[gx, gy, slot] = i
-        else:
-            ti.atomic_add(overflow_counter[None], 1)
+        force[i] = ti.Vector.zero(ti.f32, DIMENSION)
 
 
 @ti.func
@@ -190,48 +183,137 @@ def middle_band_profile(r):
     return 1.0 - ti.abs(2.0 * t - 1.0)
 
 
-@ti.kernel
-def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
-    for i in range(N_PARTICLES):
-        xi = pos[i]
-        ti_i = ptype[i]
-        fi = ti.Vector([0.0, 0.0])
+if DIMENSION == 2:
+    @ti.kernel
+    def clear_grid():
+        overflow_counter[None] = 0
+        for i, j in ti.ndrange(GRID_N, GRID_N):
+            cell_count[i, j] = 0
+else:
+    @ti.kernel
+    def clear_grid():
+        overflow_counter[None] = 0
+        for i, j, k in ti.ndrange(GRID_N, GRID_N, GRID_N):
+            cell_count[i, j, k] = 0
 
-        cx = ti.cast(xi[0] / CELL_SIZE, ti.i32)
-        cy = ti.cast(xi[1] / CELL_SIZE, ti.i32)
-        cx = ti.max(0, ti.min(cx, GRID_N - 1))
-        cy = ti.max(0, ti.min(cy, GRID_N - 1))
 
-        for ox, oy in ti.ndrange((-1, 2), (-1, 2)):  # 遍历临近的格子
-            nx = (cx + ox + GRID_N) % GRID_N
-            ny = (cy + oy + GRID_N) % GRID_N
-            count = ti.min(cell_count[nx, ny], MAX_PARTICLES_PER_CELL)
+if DIMENSION == 2:
+    @ti.kernel
+    def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
+        for i in range(N_PARTICLES):
+            gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
+            gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
 
-            for k in range(count):
-                j = cell_particles[nx, ny, k]
-                if j != i:
-                    xj = pos[j]
-                    dx = periodic_delta(xj[0], xi[0])
-                    dy = periodic_delta(xj[1], xi[1])
-                    rij = ti.Vector([dx, dy])
-                    r = rij.norm()
+            gx = ti.max(0, ti.min(gx, GRID_N - 1))
+            gy = ti.max(0, ti.min(gy, GRID_N - 1))
 
-                    if r < R2:
-                        unit = rij / r
+            slot = ti.atomic_add(cell_count[gx, gy], 1)
+            if slot < MAX_PARTICLES_PER_CELL:
+                cell_particles[gx, gy, slot] = i
+            else:
+                ti.atomic_add(overflow_counter[None], 1)
+else:
+    @ti.kernel
+    def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
+        for i in range(N_PARTICLES):
+            gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
+            gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
+            gz = ti.cast(pos[i][2] / CELL_SIZE, ti.i32)
 
-                        if r < R1:
-                            mag = -REPULSION_STRENGTH * (1.0 - r / R1)
-                            fi += mag * unit
-                        else:
-                            tri = middle_band_profile(r)
-                            ti_j = ptype[j]
-                            mag = interaction[ti_i, ti_j] * tri
-                            # if ti_i == ti_j:
-                            fi += mag * unit  # 吸引 / 排斥力
-                            # else:
-                                # fi += mag * ti.Vector([-unit[1], unit[0]])  # 旋转力
+            gx = ti.max(0, ti.min(gx, GRID_N - 1))
+            gy = ti.max(0, ti.min(gy, GRID_N - 1))
+            gz = ti.max(0, ti.min(gz, GRID_N - 1))
 
-        force[i] = fi
+            slot = ti.atomic_add(cell_count[gx, gy, gz], 1)
+            if slot < MAX_PARTICLES_PER_CELL:
+                cell_particles[gx, gy, gz, slot] = i
+            else:
+                ti.atomic_add(overflow_counter[None], 1)
+
+
+if DIMENSION == 2:
+    @ti.kernel
+    def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
+        for i in range(N_PARTICLES):
+            xi = pos[i]
+            ti_i = ptype[i]
+            fi = ti.Vector.zero(ti.f32, DIMENSION)
+
+            cx = ti.cast(xi[0] / CELL_SIZE, ti.i32)
+            cy = ti.cast(xi[1] / CELL_SIZE, ti.i32)
+            cx = ti.max(0, ti.min(cx, GRID_N - 1))
+            cy = ti.max(0, ti.min(cy, GRID_N - 1))
+
+            for ox, oy in ti.ndrange((-1, 2), (-1, 2)):  # 遍历临近的格子
+                nx = (cx + ox + GRID_N) % GRID_N
+                ny = (cy + oy + GRID_N) % GRID_N
+                count = ti.min(cell_count[nx, ny], MAX_PARTICLES_PER_CELL)
+
+                for k in range(count):
+                    j = cell_particles[nx, ny, k]
+                    if j != i:
+                        xj = pos[j]
+                        rij = ti.Vector.zero(ti.f32, DIMENSION)
+                        for d in ti.static(range(DIMENSION)):
+                            rij[d] = periodic_delta(xj[d], xi[d])
+                        r = rij.norm()
+
+                        if r < R2 and r > 1e-12:
+                            unit = rij / r
+
+                            if r < R1:
+                                mag = -REPULSION_STRENGTH * (1.0 - r / R1)
+                                fi += mag * unit
+                            else:
+                                tri = middle_band_profile(r)
+                                ti_j = ptype[j]
+                                mag = interaction[ti_i, ti_j] * tri
+                                fi += mag * unit
+
+            force[i] = fi
+else:
+    @ti.kernel
+    def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
+        for i in range(N_PARTICLES):
+            xi = pos[i]
+            ti_i = ptype[i]
+            fi = ti.Vector.zero(ti.f32, DIMENSION)
+
+            cx = ti.cast(xi[0] / CELL_SIZE, ti.i32)
+            cy = ti.cast(xi[1] / CELL_SIZE, ti.i32)
+            cz = ti.cast(xi[2] / CELL_SIZE, ti.i32)
+            cx = ti.max(0, ti.min(cx, GRID_N - 1))
+            cy = ti.max(0, ti.min(cy, GRID_N - 1))
+            cz = ti.max(0, ti.min(cz, GRID_N - 1))
+
+            for ox, oy, oz in ti.ndrange((-1, 2), (-1, 2), (-1, 2)):  # 遍历临近的格子
+                nx = (cx + ox + GRID_N) % GRID_N
+                ny = (cy + oy + GRID_N) % GRID_N
+                nz = (cz + oz + GRID_N) % GRID_N
+                count = ti.min(cell_count[nx, ny, nz], MAX_PARTICLES_PER_CELL)
+
+                for k in range(count):
+                    j = cell_particles[nx, ny, nz, k]
+                    if j != i:
+                        xj = pos[j]
+                        rij = ti.Vector.zero(ti.f32, DIMENSION)
+                        for d in ti.static(range(DIMENSION)):
+                            rij[d] = periodic_delta(xj[d], xi[d])
+
+                        r = rij.norm()
+                        if r < R2 and r > 1e-12:
+                            unit = rij / r
+
+                            if r < R1:
+                                mag = -REPULSION_STRENGTH * (1.0 - r / R1)
+                                fi += mag * unit
+                            else:
+                                tri = middle_band_profile(r)
+                                ti_j = ptype[j]
+                                mag = interaction[ti_i, ti_j] * tri
+                                fi += mag * unit
+
+            force[i] = fi
 
 
 @ti.kernel
@@ -239,16 +321,12 @@ def integrate_overdamped():  # 更新位置
     for i in range(N_PARTICLES):
         pos[i] += force[i] * (DT * R_FACTOR)
 
-        # Periodic boundary condition on a square domain
-        if pos[i][0] >= BOX_SIZE:
-            pos[i][0] -= BOX_SIZE
-        elif pos[i][0] < 0.0:
-            pos[i][0] += BOX_SIZE
-
-        if pos[i][1] >= BOX_SIZE:
-            pos[i][1] -= BOX_SIZE
-        elif pos[i][1] < 0.0:
-            pos[i][1] += BOX_SIZE
+        # Periodic boundary condition in each dimension
+        for d in ti.static(range(DIMENSION)):
+            if pos[i][d] >= BOX_SIZE:
+                pos[i][d] -= BOX_SIZE
+            elif pos[i][d] < 0.0:
+                pos[i][d] += BOX_SIZE
 
 
 # ---------- Main ----------
@@ -271,7 +349,7 @@ while window.running:
         overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
         while overflow > 0:  # 有的格子溢出了
             MAX_PARTICLES_PER_CELL *= 2  # 加倍格子容量
-            cell_particles = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
+            cell_particles = allocate_cell_particles()
             print(f"[Warning] Grid overflow count = {overflow}.")
             clear_grid()
             build_grid(cell_particles)
@@ -280,7 +358,7 @@ while window.running:
         integrate_overdamped()
 
     # 可视化（粒子比较多时这里非常耗时）
-    positions_np = pos.to_numpy() / BOX_SIZE
+    positions_np = pos.to_numpy()[:, :2] / BOX_SIZE
     window.circles(positions_np, radius=PARTICLE_RADIUS, color=colors_np)
 
     now = time.perf_counter()
