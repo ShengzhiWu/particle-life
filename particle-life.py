@@ -124,8 +124,6 @@ PARTICLE_COLORS = np.array(
     dtype=np.uint32,
 )  # 粒子颜色，在色相环上等间距分布
 
-BACKGROUND_COLOR = 0x000000
-
 print(f"DIMENSION = {DIMENSION}, GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
 
 if np.any(INTERACTION_INIT < -1.0) or np.any(INTERACTION_INIT > 1.0):
@@ -142,7 +140,6 @@ cell_count = ti.field(dtype=ti.i32, shape=cell_shape)
 cell_particles = ti.field(dtype=ti.i32, shape=cell_shape + (MAX_PARTICLES_PER_CELL,))
 overflow_counter = ti.field(dtype=ti.i32, shape=())
 
-
 @ti.kernel
 def init_particles_and_types():
     for i in range(N_PARTICLES):
@@ -153,12 +150,10 @@ def init_particles_and_types():
         ptype[i] = ti.cast(ti.random(dtype=ti.f32) * interaction.shape[0], ti.i32)
         force[i] = ti.Vector.zero(ti.f32, DIMENSION)
 
-
 @ti.func
 def periodic_delta_vec(dx):
     # Map each component into [-BOX_SIZE/2, BOX_SIZE/2) for minimum-image displacement.
     return (dx + 0.5 * BOX_SIZE) % BOX_SIZE - 0.5 * BOX_SIZE
-
 
 @ti.func
 def middle_band_profile(r):
@@ -166,13 +161,11 @@ def middle_band_profile(r):
     t = (r - R1) / (R2 - R1)
     return 1.0 - ti.abs(2.0 * t - 1.0)
 
-
 @ti.kernel
 def clear_grid():
     overflow_counter[None] = 0
     for idx in ti.grouped(ti.ndrange(*cell_count.shape)):
         cell_count[idx] = 0
-
 
 @ti.kernel
 def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
@@ -184,7 +177,6 @@ def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # 
             cell_particles[g, slot] = i
         else:
             ti.atomic_add(overflow_counter[None], 1)
-
 
 @ti.kernel
 def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
@@ -216,15 +208,12 @@ def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignor
                             ti_j = ptype[j]
                             mag = interaction[ti_i, ti_j] * tri
                             fi += mag * unit
-
         force[i] = fi
 
-
 @ti.kernel
-def integrate_overdamped():  # 更新位置
+def update_position():  # 更新位置
     for i in range(N_PARTICLES):
         pos[i] = (pos[i] + force[i] * (DT * R_FACTOR)) % BOX_SIZE
-
 
 # ---------- Main ----------
 init_particles_and_types()
@@ -233,7 +222,7 @@ interaction.from_numpy(INTERACTION_INIT)
 ptype_np = ptype.to_numpy()
 colors_np = PARTICLE_COLORS[ptype_np]
 
-window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=BACKGROUND_COLOR)  # 创建窗口
+window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=0x000000)  # 创建窗口
 center_window_on_screen_windows("Particle Life")  # 居中窗口
 
 frame = 0
@@ -252,7 +241,7 @@ while window.running:
             build_grid(cell_particles)
             overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
         compute_forces(cell_particles)
-        integrate_overdamped()
+        update_position()
 
     # 可视化（粒子比较多时这里非常耗时）
     positions_np = pos.to_numpy()[:, :2] / BOX_SIZE
