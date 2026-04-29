@@ -12,10 +12,10 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-DIMENSION = 2
+DIMENSION = 3
 assert DIMENSION in (2, 3), "DIMENSION must be 2 or 3."
 N_PARTICLES = 6000
-space_filling_factor = 10  # 10 1
+space_filling_factor = 1  # 10 1
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
@@ -193,38 +193,16 @@ else:
             cell_count[i, j, k] = 0
 
 
-if DIMENSION == 2:
-    @ti.kernel
-    def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
-        for i in range(N_PARTICLES):
-            gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
-            gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
+@ti.kernel
+def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
+    for i in range(N_PARTICLES):
+        g = ti.cast(pos[i] / CELL_SIZE, ti.i32)
 
-            gx = ti.max(0, ti.min(gx, GRID_N - 1))
-            gy = ti.max(0, ti.min(gy, GRID_N - 1))
-
-            slot = ti.atomic_add(cell_count[gx, gy], 1)
-            if slot < MAX_PARTICLES_PER_CELL:
-                cell_particles[gx, gy, slot] = i
-            else:
-                ti.atomic_add(overflow_counter[None], 1)
-else:
-    @ti.kernel
-    def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # type: ignore
-        for i in range(N_PARTICLES):
-            gx = ti.cast(pos[i][0] / CELL_SIZE, ti.i32)
-            gy = ti.cast(pos[i][1] / CELL_SIZE, ti.i32)
-            gz = ti.cast(pos[i][2] / CELL_SIZE, ti.i32)
-
-            gx = ti.max(0, ti.min(gx, GRID_N - 1))
-            gy = ti.max(0, ti.min(gy, GRID_N - 1))
-            gz = ti.max(0, ti.min(gz, GRID_N - 1))
-
-            slot = ti.atomic_add(cell_count[gx, gy, gz], 1)
-            if slot < MAX_PARTICLES_PER_CELL:
-                cell_particles[gx, gy, gz, slot] = i
-            else:
-                ti.atomic_add(overflow_counter[None], 1)
+        slot = ti.atomic_add(cell_count[g], 1)
+        if slot < MAX_PARTICLES_PER_CELL:
+            cell_particles[g, slot] = i
+        else:
+            ti.atomic_add(overflow_counter[None], 1)
 
 
 if DIMENSION == 2:
