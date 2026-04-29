@@ -197,7 +197,7 @@ def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignor
 
         for offs in ti.grouped(ti.ndrange(*((-1, 2),) * DIMENSION)):  # 遍历临近的格子
             n = (c + offs + GRID_N) % GRID_N
-            count = ti.min(cell_count[n], MAX_PARTICLES_PER_CELL)
+            count = cell_count[n]
 
             for k in range(count):
                 j = cell_particles[n, k]
