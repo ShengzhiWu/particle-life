@@ -12,10 +12,10 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-DIMENSION = 3
+DIMENSION = 2
 assert DIMENSION in (2, 3), "DIMENSION must be 2 or 3."
 N_PARTICLES = 6000
-space_filling_factor = 1  # 10 1
+space_filling_factor = 10  # 10 1
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
@@ -205,85 +205,38 @@ def build_grid(cell_particles: ti.template()):  # 将粒子分配到网格中 # 
             ti.atomic_add(overflow_counter[None], 1)
 
 
-if DIMENSION == 2:
-    @ti.kernel
-    def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
-        for i in range(N_PARTICLES):
-            xi = pos[i]
-            ti_i = ptype[i]
-            fi = ti.Vector.zero(ti.f32, DIMENSION)
+@ti.kernel
+def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
+    for i in range(N_PARTICLES):
+        xi = pos[i]
+        ti_i = ptype[i]
+        fi = ti.Vector.zero(ti.f32, DIMENSION)
 
-            cx = ti.cast(xi[0] / CELL_SIZE, ti.i32)
-            cy = ti.cast(xi[1] / CELL_SIZE, ti.i32)
-            cx = ti.max(0, ti.min(cx, GRID_N - 1))
-            cy = ti.max(0, ti.min(cy, GRID_N - 1))
+        c = ti.cast(xi / CELL_SIZE, ti.i32)
 
-            for ox, oy in ti.ndrange((-1, 2), (-1, 2)):  # 遍历临近的格子
-                nx = (cx + ox + GRID_N) % GRID_N
-                ny = (cy + oy + GRID_N) % GRID_N
-                count = ti.min(cell_count[nx, ny], MAX_PARTICLES_PER_CELL)
+        for offs in ti.grouped(ti.ndrange(*((-1, 2),) * DIMENSION)):  # 遍历临近的格子
+            n = (c + offs + GRID_N) % GRID_N
+            count = ti.min(cell_count[n], MAX_PARTICLES_PER_CELL)
 
-                for k in range(count):
-                    j = cell_particles[nx, ny, k]
-                    if j != i:
-                        xj = pos[j]
-                        rij = periodic_delta_vec(xj - xi)
-                        r = rij.norm()
+            for k in range(count):
+                j = cell_particles[n, k]
+                if j != i:
+                    rij = periodic_delta_vec(pos[j] - xi)
+                    r = rij.norm()
 
-                        if r < R2 and r > 1e-12:
-                            unit = rij / r
+                    if r < R2:
+                        unit = rij / r
 
-                            if r < R1:
-                                mag = -REPULSION_STRENGTH * (1.0 - r / R1)
-                                fi += mag * unit
-                            else:
-                                tri = middle_band_profile(r)
-                                ti_j = ptype[j]
-                                mag = interaction[ti_i, ti_j] * tri
-                                fi += mag * unit
+                        if r < R1:
+                            mag = -REPULSION_STRENGTH * (1.0 - r / R1)
+                            fi += mag * unit
+                        else:
+                            tri = middle_band_profile(r)
+                            ti_j = ptype[j]
+                            mag = interaction[ti_i, ti_j] * tri
+                            fi += mag * unit
 
-            force[i] = fi
-else:
-    @ti.kernel
-    def compute_forces(cell_particles: ti.template()):  # 计算受力 # type: ignore
-        for i in range(N_PARTICLES):
-            xi = pos[i]
-            ti_i = ptype[i]
-            fi = ti.Vector.zero(ti.f32, DIMENSION)
-
-            cx = ti.cast(xi[0] / CELL_SIZE, ti.i32)
-            cy = ti.cast(xi[1] / CELL_SIZE, ti.i32)
-            cz = ti.cast(xi[2] / CELL_SIZE, ti.i32)
-            cx = ti.max(0, ti.min(cx, GRID_N - 1))
-            cy = ti.max(0, ti.min(cy, GRID_N - 1))
-            cz = ti.max(0, ti.min(cz, GRID_N - 1))
-
-            for ox, oy, oz in ti.ndrange((-1, 2), (-1, 2), (-1, 2)):  # 遍历临近的格子
-                nx = (cx + ox + GRID_N) % GRID_N
-                ny = (cy + oy + GRID_N) % GRID_N
-                nz = (cz + oz + GRID_N) % GRID_N
-                count = ti.min(cell_count[nx, ny, nz], MAX_PARTICLES_PER_CELL)
-
-                for k in range(count):
-                    j = cell_particles[nx, ny, nz, k]
-                    if j != i:
-                        xj = pos[j]
-                        rij = periodic_delta_vec(xj - xi)
-
-                        r = rij.norm()
-                        if r < R2 and r > 1e-12:
-                            unit = rij / r
-
-                            if r < R1:
-                                mag = -REPULSION_STRENGTH * (1.0 - r / R1)
-                                fi += mag * unit
-                            else:
-                                tri = middle_band_profile(r)
-                                ti_j = ptype[j]
-                                mag = interaction[ti_i, ti_j] * tri
-                                fi += mag * unit
-
-            force[i] = fi
+        force[i] = fi
 
 
 @ti.kernel
