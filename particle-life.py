@@ -13,16 +13,15 @@ ti.init(arch=ti.gpu)
 # Simulation configuration
 # -----------------------------
 DIMENSION = 2
-assert DIMENSION in (2, 3), "DIMENSION must be 2 or 3."
 N_PARTICLES = 6000
-space_filling_factor = 10  # 10 1
+space_filling_factor = 10  # 10 (for 2d) 1 (for 3d) 0.1 (for 4d)
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5  # 5
 DT = 0.002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 100  # 5
+SUBSTEPS_PER_FRAME = 10  # 5
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
@@ -50,10 +49,7 @@ INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
 GRID_N = MAX_GRID_N
 CELL_SIZE = BOX_SIZE / GRID_N
-if DIMENSION == 2:
-    MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N) * 2)  # 每个格子中的最大粒子数
-else:
-    MAX_PARTICLES_PER_CELL = int(N_PARTICLES / (GRID_N * GRID_N * GRID_N) * 2)
+MAX_PARTICLES_PER_CELL = int(N_PARTICLES / GRID_N ** DIMENSION * 2)  # 每个格子中的最大粒子数
 
 def get_windows_work_area():  # 获取Windows工作区（任务栏以上的空间）尺寸
     if os.name != "nt":  # 非 Windows 系统不支持
@@ -141,17 +137,9 @@ ptype = ti.field(dtype=ti.i32, shape=N_PARTICLES)  # 粒子类型
 
 interaction = ti.field(dtype=ti.f32, shape=INTERACTION_INIT.shape)
 
-if DIMENSION == 2:
-    cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N))
-
-    def allocate_cell_particles():
-        return ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
-else:
-    cell_count = ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, GRID_N))
-
-    def allocate_cell_particles():
-        return ti.field(dtype=ti.i32, shape=(GRID_N, GRID_N, GRID_N, MAX_PARTICLES_PER_CELL))
-cell_particles = allocate_cell_particles()
+cell_shape = (GRID_N,) * DIMENSION
+cell_count = ti.field(dtype=ti.i32, shape=cell_shape)
+cell_particles = ti.field(dtype=ti.i32, shape=cell_shape + (MAX_PARTICLES_PER_CELL,))
 overflow_counter = ti.field(dtype=ti.i32, shape=())
 
 
@@ -258,8 +246,8 @@ while window.running:
         overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
         while overflow > 0:  # 有的格子溢出了
             MAX_PARTICLES_PER_CELL *= 2  # 加倍格子容量
-            cell_particles = allocate_cell_particles()
-            print(f"[Warning] Grid overflow count = {overflow}.")
+            cell_particles = ti.field(dtype=ti.i32, shape=cell_shape + (MAX_PARTICLES_PER_CELL,))
+            print(f"Grid overflow. The capacity has been automatically doubled.")
             clear_grid()
             build_grid(cell_particles)
             overflow = overflow_counter[None]  # 格子比较多时这里会消耗一些时间
