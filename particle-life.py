@@ -167,13 +167,9 @@ def init_particles_and_types():
 
 
 @ti.func
-def periodic_delta(xj, xi):
-    d = xj - xi
-    if d > 0.5 * BOX_SIZE:
-        d -= BOX_SIZE
-    elif d < -0.5 * BOX_SIZE:
-        d += BOX_SIZE
-    return d
+def periodic_delta_vec(dx):
+    # Map each component into [-BOX_SIZE/2, BOX_SIZE/2) for minimum-image displacement.
+    return (dx + 0.5 * BOX_SIZE) % BOX_SIZE - 0.5 * BOX_SIZE
 
 
 @ti.func
@@ -253,9 +249,7 @@ if DIMENSION == 2:
                     j = cell_particles[nx, ny, k]
                     if j != i:
                         xj = pos[j]
-                        rij = ti.Vector.zero(ti.f32, DIMENSION)
-                        for d in ti.static(range(DIMENSION)):
-                            rij[d] = periodic_delta(xj[d], xi[d])
+                        rij = periodic_delta_vec(xj - xi)
                         r = rij.norm()
 
                         if r < R2 and r > 1e-12:
@@ -296,9 +290,7 @@ else:
                     j = cell_particles[nx, ny, nz, k]
                     if j != i:
                         xj = pos[j]
-                        rij = ti.Vector.zero(ti.f32, DIMENSION)
-                        for d in ti.static(range(DIMENSION)):
-                            rij[d] = periodic_delta(xj[d], xi[d])
+                        rij = periodic_delta_vec(xj - xi)
 
                         r = rij.norm()
                         if r < R2 and r > 1e-12:
@@ -319,14 +311,7 @@ else:
 @ti.kernel
 def integrate_overdamped():  # 更新位置
     for i in range(N_PARTICLES):
-        pos[i] += force[i] * (DT * R_FACTOR)
-
-        # Periodic boundary condition in each dimension
-        for d in ti.static(range(DIMENSION)):
-            if pos[i][d] >= BOX_SIZE:
-                pos[i][d] -= BOX_SIZE
-            elif pos[i][d] < 0.0:
-                pos[i][d] += BOX_SIZE
+        pos[i] = (pos[i] + force[i] * (DT * R_FACTOR)) % BOX_SIZE
 
 
 # ---------- Main ----------
