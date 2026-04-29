@@ -12,16 +12,16 @@ ti.init(arch=ti.gpu)
 # -----------------------------
 # Simulation configuration
 # -----------------------------
-DIMENSION = 2
+DIMENSION = 3
 N_PARTICLES = 6000
-space_filling_factor = 10  # 10 (for 2d) 1 (for 3d) 0.1 (for 4d)
+space_filling_factor = 1  # 10 (for 2d) 1 (for 3d) 0.1 (for 4d)
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
 R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5  # 5
 DT = 0.002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 10  # 5
+SUBSTEPS_PER_FRAME = 5  # 5
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
@@ -222,6 +222,12 @@ interaction.from_numpy(INTERACTION_INIT)
 ptype_np = ptype.to_numpy()
 colors_np = PARTICLE_COLORS[ptype_np]
 
+output_dir = "output/rainbow_worms/"
+if (output_dir is not None) and (not os.path.exists(output_dir)):
+    os.makedirs(output_dir)
+
+np.save(f"{output_dir}particle_type.npy", ptype_np)
+
 window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=0x000000)  # 创建窗口
 center_window_on_screen_windows("Particle Life")  # 居中窗口
 
@@ -244,8 +250,8 @@ while window.running:
         update_position()
 
     # 可视化（粒子比较多时这里非常耗时）
-    positions_np = pos.to_numpy()[:, :2] / BOX_SIZE
-    window.circles(positions_np, radius=PARTICLE_RADIUS, color=colors_np)
+    positions_np = pos.to_numpy() / BOX_SIZE
+    window.circles(positions_np[:, :2], radius=PARTICLE_RADIUS, color=colors_np)
 
     now = time.perf_counter()
     dt_frame = now - last_time
@@ -254,6 +260,10 @@ while window.running:
         fps = fps * 0.9 + (1.0 / dt_frame) * 0.1 if fps is not None else 1.0 / dt_frame
 
     window.text(f"FPS: {fps:.1f}", pos=(0.01, 0.03), font_size=18, color=0xFFFFFF)  # 显示帧率
+
+    if (output_dir is not None) and frame % 1 == 0:
+        # 将粒子数据保存到本地
+        np.save(f"{output_dir}{frame}.npy", positions_np)
 
     window.show()
     frame += 1
