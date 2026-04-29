@@ -179,18 +179,11 @@ def middle_band_profile(r):
     return 1.0 - ti.abs(2.0 * t - 1.0)
 
 
-if DIMENSION == 2:
-    @ti.kernel
-    def clear_grid():
-        overflow_counter[None] = 0
-        for i, j in ti.ndrange(GRID_N, GRID_N):
-            cell_count[i, j] = 0
-else:
-    @ti.kernel
-    def clear_grid():
-        overflow_counter[None] = 0
-        for i, j, k in ti.ndrange(GRID_N, GRID_N, GRID_N):
-            cell_count[i, j, k] = 0
+@ti.kernel
+def clear_grid():
+    overflow_counter[None] = 0
+    for idx in ti.grouped(ti.ndrange(*cell_count.shape)):
+        cell_count[idx] = 0
 
 
 @ti.kernel
