@@ -13,7 +13,7 @@ ti.init(arch=ti.gpu)
 # Simulation configuration
 # -----------------------------
 DIMENSION = 3
-N_PARTICLES = 6000
+N_PARTICLES = 50000
 space_filling_factor = 1  # 10 (for 2d) 1 (for 3d) 0.1 (for 4d)
 BOX_SIZE = 1.0  # Simulation box is [0, BOX_SIZE] x [0, BOX_SIZE]
 R_FACTOR = (BOX_SIZE ** DIMENSION / (N_PARTICLES / space_filling_factor)) ** (1.0 / DIMENSION)  # Interaction radius factor relative to box size
@@ -21,13 +21,14 @@ R1 = R_FACTOR * 1
 R2 = R_FACTOR * 5  # 5
 DT = 0.002
 REPULSION_STRENGTH = 2
-SUBSTEPS_PER_FRAME = 5  # 5
+SUBSTEPS_PER_FRAME = 6  # 5
 print(f'R1 = {R1:.5f}, R2 = {R2:.5f}')
 
 # Non-symmetric interaction matrix in [-1, 1]
 # interaction[a, b] means force coefficient on type-a particle from type-b particle
-a = 0.3
-b = 0.05
+a = 0
+b = -1
+c = 0.3
 INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
     # [
     #     [0.03, -1],
@@ -36,18 +37,18 @@ INTERACTION_INIT = np.array(  # 相互作用矩阵，负值相斥正值相吸
 
     # 彩虹虫子
     [
-        [a, 0, 0, 0, 0],
-        [b, a, 0, 0, 0],
-        [0, b, a, 0, 0],
-        [0, 0, b, a, 0],
-        [0, 0, 0, b, a],
+        [a, c, b],
+        [b, a, c],
+        [c, b, a],
     ],
     dtype=np.float32,
 )
+# np.random.seed(15)
+# INTERACTION_INIT = np.random.randn(8, 8).astype(np.float32) * 0.2  # 随机相互作用矩阵
 
 # Grid
 MAX_GRID_N = max(1, int(BOX_SIZE / R2))
-GRID_N = MAX_GRID_N
+GRID_N = max(3, MAX_GRID_N)
 CELL_SIZE = BOX_SIZE / GRID_N
 MAX_PARTICLES_PER_CELL = int(N_PARTICLES / GRID_N ** DIMENSION * 2)  # 每个格子中的最大粒子数
 
@@ -125,9 +126,6 @@ PARTICLE_COLORS = np.array(
 )  # 粒子颜色，在色相环上等间距分布
 
 print(f"DIMENSION = {DIMENSION}, GRID_N = {GRID_N}, CELL_SIZE = {CELL_SIZE:.5f}")
-
-if np.any(INTERACTION_INIT < -1.0) or np.any(INTERACTION_INIT > 1.0):
-    raise ValueError("Interaction matrix values must be within [-1, 1].")
 
 pos = ti.Vector.field(DIMENSION, dtype=ti.f32, shape=N_PARTICLES)
 force = ti.Vector.field(DIMENSION, dtype=ti.f32, shape=N_PARTICLES)
@@ -222,11 +220,14 @@ interaction.from_numpy(INTERACTION_INIT)
 ptype_np = ptype.to_numpy()
 colors_np = PARTICLE_COLORS[ptype_np]
 
-output_dir = "output/rainbow_worms/"
+output_dir = None
+# output_dir = "output/吸引排斥环/"
 if (output_dir is not None) and (not os.path.exists(output_dir)):
     os.makedirs(output_dir)
 
-np.save(f"{output_dir}particle_type.npy", ptype_np)
+if output_dir is not None:
+    np.save(f"{output_dir}interaction.npy", INTERACTION_INIT)
+    np.save(f"{output_dir}particle_type.npy", ptype_np)
 
 window = ti.GUI("Particle Life", res=(WINDOW_RES, WINDOW_RES), background_color=0x000000)  # 创建窗口
 center_window_on_screen_windows("Particle Life")  # 居中窗口
@@ -264,6 +265,7 @@ while window.running:
     if (output_dir is not None) and frame % 1 == 0:
         # 将粒子数据保存到本地
         np.save(f"{output_dir}{frame}.npy", positions_np)
+        print(f"Saved frame {frame}")
 
     window.show()
     frame += 1
